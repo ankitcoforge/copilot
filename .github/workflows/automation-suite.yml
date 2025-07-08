@@ -1,0 +1,157 @@
+name: Full Automation Suite
+
+on:
+  push:
+    branches: [ main, master, develop, copilot/fix-5 ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  automation-suite:
+    name: Run Full Automation Suite
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Java 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        cache: maven
+        
+    - name: Build project
+      run: mvn clean compile
+      
+    - name: Install Playwright browsers
+      run: |
+        echo "Installing Playwright browsers..."
+        mvn exec:java -Dexec.mainClass="com.microsoft.playwright.CLI" -Dexec.args="install" || {
+          echo "Maven install failed, trying alternative approach..."
+          npm install -g playwright@1.40.0
+          npx playwright install
+        }
+      
+    - name: Run full automation suite
+      run: |
+        echo "Starting full automation test suite..."
+        mvn test -DfailIfNoTests=false
+      continue-on-error: true
+      env:
+        BROWSER: chromium
+        HEADLESS: true
+        
+    - name: Generate test summary
+      if: always()
+      run: |
+        echo "# Automation Suite Results" > test-summary.md
+        echo "" >> test-summary.md
+        echo "**Execution Date**: $(date)" >> test-summary.md
+        echo "**Branch**: ${{ github.ref_name }}" >> test-summary.md
+        echo "**Commit**: ${{ github.sha }}" >> test-summary.md
+        echo "" >> test-summary.md
+        
+        if [ -d "target/surefire-reports" ]; then
+          echo "## Test Results Summary" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          # Find and count test result files
+          xml_files=$(find target/surefire-reports -name "TEST-*.xml" 2>/dev/null | wc -l)
+          
+          if [ $xml_files -gt 0 ]; then
+            # Extract test statistics
+            total_tests=0
+            total_failures=0
+            total_errors=0
+            total_skipped=0
+            
+            for file in target/surefire-reports/TEST-*.xml; do
+              if [ -f "$file" ]; then
+                tests=$(grep -o 'tests="[0-9]*"' "$file" | cut -d'"' -f2 | head -1)
+                failures=$(grep -o 'failures="[0-9]*"' "$file" | cut -d'"' -f2 | head -1)
+                errors=$(grep -o 'errors="[0-9]*"' "$file" | cut -d'"' -f2 | head -1)
+                skipped=$(grep -o 'skipped="[0-9]*"' "$file" | cut -d'"' -f2 | head -1)
+                
+                total_tests=$((total_tests + ${tests:-0}))
+                total_failures=$((total_failures + ${failures:-0}))
+                total_errors=$((total_errors + ${errors:-0}))
+                total_skipped=$((total_skipped + ${skipped:-0}))
+              fi
+            done
+            
+            total_passed=$((total_tests - total_failures - total_errors - total_skipped))
+            
+            echo "| Metric | Count |" >> test-summary.md
+            echo "|--------|-------|" >> test-summary.md
+            echo "| Total Tests | $total_tests |" >> test-summary.md
+            echo "| Passed | $total_passed |" >> test-summary.md
+            echo "| Failed | $total_failures |" >> test-summary.md
+            echo "| Errors | $total_errors |" >> test-summary.md
+            echo "| Skipped | $total_skipped |" >> test-summary.md
+            
+            if [ $total_tests -gt 0 ]; then
+              pass_rate=$(( total_passed * 100 / total_tests ))
+              echo "| Pass Rate | ${pass_rate}% |" >> test-summary.md
+            fi
+            
+            echo "" >> test-summary.md
+            echo "## Test Suites" >> test-summary.md
+            echo "" >> test-summary.md
+            
+            for file in target/surefire-reports/TEST-*.xml; do
+              if [ -f "$file" ]; then
+                suite_name=$(basename "$file" .xml | sed 's/TEST-testsuite\.//' | sed 's/TEST-//')
+                tests=$(grep -o 'tests="[0-9]*"' "$file" | cut -d'"' -f2 | head -1)
+                failures=$(grep -o 'failures="[0-9]*"' "$file" | cut -d'"' -f2 | head -1)
+                errors=$(grep -o 'errors="[0-9]*"' "$file" | cut -d'"' -f2 | head -1)
+                
+                status="✅ PASS"
+                if [ "${failures:-0}" -gt 0 ] || [ "${errors:-0}" -gt 0 ]; then
+                  status="❌ FAIL"
+                fi
+                
+                echo "- **$suite_name** $status (${tests:-0} tests, ${failures:-0} failures, ${errors:-0} errors)" >> test-summary.md
+              fi
+            done
+          else
+            echo "❌ No test results found" >> test-summary.md
+          fi
+        else
+          echo "❌ No test reports directory found" >> test-summary.md
+        fi
+        
+        echo "" >> test-summary.md
+        echo "## Artifacts" >> test-summary.md
+        echo "- Test Reports: Available in artifacts" >> test-summary.md
+        echo "- Screenshots: Available if tests failed" >> test-summary.md
+        echo "- Videos: Available if enabled" >> test-summary.md
+        
+        echo "=========================================="
+        echo "TEST SUMMARY:"
+        cat test-summary.md
+        echo "=========================================="
+        
+    - name: Upload test reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: automation-test-reports
+        path: |
+          target/surefire-reports/
+          test-summary.md
+        retention-days: 30
+        
+    - name: Upload test artifacts
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: automation-test-artifacts
+        path: |
+          test-results/
+        retention-days: 7
