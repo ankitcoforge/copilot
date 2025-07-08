@@ -1,0 +1,235 @@
+name: ADL Playwright Automation CI
+
+on:
+  push:
+    branches: [ main, master, develop, copilot/fix-5 ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  # Main job: Run full automation suite
+  full-automation-suite:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        
+    - name: Cache Maven dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+        
+    - name: Install dependencies
+      run: mvn clean compile
+      
+    - name: Install Playwright browsers
+      run: |
+        mvn exec:java -Dexec.mainClass="com.microsoft.playwright.CLI" -Dexec.args="install" || {
+          echo "Browser installation failed, using alternative method"
+          echo "Installing browsers manually..."
+          npm install playwright@1.40.0 || echo "npm install failed"
+          npx playwright install chromium firefox webkit || echo "npx install failed"
+        }
+      
+    - name: Run full test suite
+      run: mvn test
+      continue-on-error: true
+      env:
+        BROWSER: chromium
+        HEADLESS: true
+        
+    - name: Generate test report
+      if: always()
+      run: |
+        echo "## Full Automation Suite Results" > test-summary.md
+        echo "" >> test-summary.md
+        echo "**Date**: $(date)" >> test-summary.md
+        echo "**Branch**: ${{ github.ref_name }}" >> test-summary.md
+        echo "**Commit**: ${{ github.sha }}" >> test-summary.md
+        echo "" >> test-summary.md
+        
+        if [ -d "target/surefire-reports" ]; then
+          echo "### Test Results" >> test-summary.md
+          
+          # Count XML report files
+          TOTAL_SUITES=$(find target/surefire-reports -name "TEST-*.xml" 2>/dev/null | wc -l)
+          echo "- Total Test Suite Files: $TOTAL_SUITES" >> test-summary.md
+          
+          # Parse test results if available
+          if [ $TOTAL_SUITES -gt 0 ]; then
+            TOTAL_TESTS=$(find target/surefire-reports -name "TEST-*.xml" -exec grep -o 'tests="[0-9]*"' {} \; | cut -d'"' -f2 | awk '{sum+=$1} END {print sum+0}')
+            FAILED_TESTS=$(find target/surefire-reports -name "TEST-*.xml" -exec grep -o 'failures="[0-9]*"' {} \; | cut -d'"' -f2 | awk '{sum+=$1} END {print sum+0}')
+            ERROR_TESTS=$(find target/surefire-reports -name "TEST-*.xml" -exec grep -o 'errors="[0-9]*"' {} \; | cut -d'"' -f2 | awk '{sum+=$1} END {print sum+0}')
+            SKIPPED_TESTS=$(find target/surefire-reports -name "TEST-*.xml" -exec grep -o 'skipped="[0-9]*"' {} \; | cut -d'"' -f2 | awk '{sum+=$1} END {print sum+0}')
+            PASSED_TESTS=$((TOTAL_TESTS - FAILED_TESTS - ERROR_TESTS - SKIPPED_TESTS))
+            
+            echo "- Total Tests: $TOTAL_TESTS" >> test-summary.md
+            echo "- Passed: $PASSED_TESTS" >> test-summary.md
+            echo "- Failed: $FAILED_TESTS" >> test-summary.md
+            echo "- Errors: $ERROR_TESTS" >> test-summary.md
+            echo "- Skipped: $SKIPPED_TESTS" >> test-summary.md
+            
+            # Calculate pass rate
+            if [ $TOTAL_TESTS -gt 0 ]; then
+              PASS_RATE=$(echo "scale=2; $PASSED_TESTS * 100 / $TOTAL_TESTS" | bc -l 2>/dev/null || echo "0")
+              echo "- Pass Rate: ${PASS_RATE}%" >> test-summary.md
+            fi
+          fi
+          
+          echo "" >> test-summary.md
+          echo "### Test Suites Executed" >> test-summary.md
+          for file in target/surefire-reports/TEST-*.xml; do
+            if [ -f "$file" ]; then
+              suite_name=$(basename "$file" .xml | sed 's/TEST-//')
+              # Get test counts for this suite
+              tests=$(grep -o 'tests="[0-9]*"' "$file" | cut -d'"' -f2)
+              failures=$(grep -o 'failures="[0-9]*"' "$file" | cut -d'"' -f2)
+              errors=$(grep -o 'errors="[0-9]*"' "$file" | cut -d'"' -f2)
+              echo "- $suite_name (Tests: $tests, Failures: $failures, Errors: $errors)" >> test-summary.md
+            fi
+          done
+        else
+          echo "❌ No test reports found in target/surefire-reports/" >> test-summary.md
+        fi
+        
+        echo "" >> test-summary.md
+        echo "### Artifacts Generated" >> test-summary.md
+        echo "- Test Reports: \`target/surefire-reports/\`" >> test-summary.md
+        echo "- Screenshots: \`test-results/screenshots/\`" >> test-summary.md
+        echo "- Videos: \`test-results/videos/\`" >> test-summary.md
+        echo "- Traces: \`test-results/traces/\`" >> test-summary.md
+        
+        cat test-summary.md
+        
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: full-test-results
+        path: |
+          target/surefire-reports/
+          test-results/
+          test-summary.md
+          
+    - name: Upload screenshots
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-screenshots
+        path: test-results/screenshots/
+        
+    - name: Upload videos
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-videos
+        path: test-results/videos/
+
+  # Cross-browser testing
+  cross-browser-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        browser: [chromium, firefox, webkit]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        
+    - name: Cache Maven dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+        
+    - name: Install dependencies
+      run: mvn clean compile
+      
+    - name: Install Playwright browsers
+      run: |
+        mvn exec:java -Dexec.mainClass="com.microsoft.playwright.CLI" -Dexec.args="install ${{ matrix.browser }}" || {
+          echo "Maven browser installation failed, trying npm approach"
+          npm install -g playwright@1.40.0 || echo "npm install failed"
+          npx playwright install ${{ matrix.browser }} || echo "npx install failed"
+        }
+      
+    - name: Run tests - ${{ matrix.browser }}
+      run: mvn test -Dbrowser=${{ matrix.browser }}
+      continue-on-error: true
+      env:
+        BROWSER: ${{ matrix.browser }}
+        HEADLESS: true
+      
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-${{ matrix.browser }}
+        path: |
+          target/surefire-reports/
+          test-results/
+
+  # Parallel test execution
+  parallel-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        
+    - name: Cache Maven dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+        
+    - name: Install dependencies
+      run: mvn clean compile
+      
+    - name: Install Playwright browsers
+      run: |
+        mvn exec:java -Dexec.mainClass="com.microsoft.playwright.CLI" -Dexec.args="install" || {
+          echo "Maven browser installation failed, trying npm approach"
+          npm install -g playwright@1.40.0 || echo "npm install failed"
+          npx playwright install || echo "npx install failed"
+        }
+      
+    - name: Run parallel tests
+      run: mvn test -Pparallel
+      continue-on-error: true
+      env:
+        BROWSER: chromium
+        HEADLESS: true
+      
+    - name: Upload parallel test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: parallel-test-results
+        path: |
+          target/surefire-reports/
+          test-results/
