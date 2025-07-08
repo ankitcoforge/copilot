@@ -150,6 +150,37 @@ This framework has been migrated from Selenium WebDriver to Playwright with the 
 3. Update documentation as needed
 4. Ensure all tests pass before submitting
 
+## GitHub Actions CI/CD
+
+The project includes a comprehensive GitHub Actions workflow that automatically:
+
+### Automated Testing
+- **Full Test Suite**: Runs all test suites with detailed reporting
+- **Cross-browser Testing**: Executes tests across Chromium, Firefox, and WebKit
+- **Parallel Execution**: Runs tests in parallel for faster feedback
+
+### Workflow Triggers
+- Push to `main`, `master`, or `develop` branches
+- Pull requests to main branches
+- Manual workflow dispatch
+
+### Artifacts Generated
+- Test reports (HTML and XML)
+- Screenshots on test failures
+- Video recordings (when enabled)
+- Playwright traces for debugging
+
+### Running Tests Locally vs CI
+```bash
+# Local execution
+mvn test
+
+# Same commands used in CI
+mvn clean compile
+mvn exec:java -Dexec.mainClass="com.microsoft.playwright.CLI" -Dexec.args="install"
+mvn test
+```
+
 ## Troubleshooting
 
 ### Common Issues
