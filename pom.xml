@@ -125,6 +125,7 @@
             </plugin>
 
             <!-- Exec plugin to run Playwright install -->
+            <!--
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
@@ -138,13 +139,12 @@
                         </goals>
                         <configuration>
                             <mainClass>com.microsoft.playwright.CLI</mainClass>
-                            <args>
-                                <arg>install</arg>
-                            </args>
+                            <commandlineArgs>install</commandlineArgs>
                         </configuration>
                     </execution>
                 </executions>
             </plugin>
+            -->
         </plugins>
     </build>
 

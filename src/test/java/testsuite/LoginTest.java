@@ -76,8 +76,8 @@ public class LoginTest extends BaseClass {
     public void testLoginValidationInvalidCredentials() {
         navigate();
         String errorMessage = loginActions.loginValidation("invalid@example.com", "wrongpassword");
-        Assert.assertTrue(errorMessage.contains("invalid") || errorMessage.contains("incorrect"), 
-                         "Error message not displayed for invalid credentials");
+        Assert.assertTrue(errorMessage.toLowerCase().contains("invalid") || errorMessage.toLowerCase().contains("incorrect"), 
+                         "Error message not displayed for invalid credentials: " + errorMessage);
     }
     
     /**
