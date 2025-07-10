@@ -138,7 +138,7 @@ jobs:
         echo "=========================================="
         
     - name: Upload test reports
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: automation-test-reports
@@ -148,7 +148,7 @@ jobs:
         retention-days: 30
         
     - name: Upload test artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: automation-test-artifacts
